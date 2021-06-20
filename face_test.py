@@ -224,7 +224,7 @@ def test(data,
             plot_images(img, targets, paths, f, names)
             # Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
             f = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
-            plot_images(img, output_to_target(out), paths, f, names)
+            plot_images(img, output_to_target(out), paths, f, names, ifpred=True)
             # Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
 
     # Compute statistics

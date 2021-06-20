@@ -80,6 +80,16 @@ def plot_one_box(x, im, color=(128, 128, 128), label=None, line_thickness=3):
         cv2.rectangle(im, c1, c2, color, -1, cv2.LINE_AA)  # filled
         cv2.putText(im, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
 
+def plot_one_landmark(x, im, color=(128, 128, 128), label=None, line_thickness=3):
+    # Plots one bounding box on image 'im' using OpenCV
+    assert im.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(im) to plot_on_box() input image.'
+    clors = [(255,0,0),(0,255,0),(0,0,255),(255,255,0),(0,255,255)]
+    for i in range(5):
+        p1 = int(x[i*2])
+        p2 = int(x[i*2+1])
+        if p1 > 0 and p2 > 0:
+            cv2.circle(im, (p1,p2), 3, clors[i], 0)
+
 
 def plot_one_box_PIL(box, im, color=(128, 128, 128), label=None, line_thickness=None):
     # Plots one bounding box on image 'im' using PIL
@@ -124,7 +134,7 @@ def output_to_target(output):
     return np.array(targets)
 
 
-def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16):
+def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16, ifpred=False):
     # Plot image grid with labels
 
     if isinstance(images, torch.Tensor):
@@ -164,6 +174,10 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         if len(targets) > 0:
             image_targets = targets[targets[:, 0] == i]
             boxes = xywh2xyxy(image_targets[:, 2:6]).T
+            if not ifpred:
+                landmarks = image_targets[:, 6:16].T
+            else:
+                landmarks = image_targets[:, 7:17].T
             classes = image_targets[:, 1].astype('int')
             labels = image_targets.shape[1] == 16  # labels if no conf column
             conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
@@ -174,8 +188,13 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                     boxes[[1, 3]] *= h
                 elif scale_factor < 1:  # absolute coords need scale if image scales
                     boxes *= scale_factor
+                if landmarks.max() <= 1.01:
+                    landmarks[[0, 2, 4, 6, 8]] *= w
+                    landmarks[[1, 3, 5, 7, 9]] *= h
             boxes[[0, 2]] += block_x
             boxes[[1, 3]] += block_y
+            landmarks[[0, 2, 4, 6, 8]] += block_x
+            landmarks[[1, 3, 5, 7, 9]] += block_y
             for j, box in enumerate(boxes.T):
                 cls = int(classes[j])
                 color = colors(cls)
@@ -183,6 +202,14 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 if labels or conf[j] > 0.25:  # 0.25 conf thresh
                     label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
                     plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+
+            for j, landmark in enumerate(landmarks.T):
+                cls = int(classes[j])
+                color = colors(cls)
+                cls = names[cls] if names else cls
+                if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                    label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
+                    plot_one_landmark(landmark, mosaic, label=label, color=color, line_thickness=tl)
 
         # Draw image filename labels
         if paths:
