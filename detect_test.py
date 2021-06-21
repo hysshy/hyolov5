@@ -25,7 +25,7 @@ def test(data,
          imgsz=640,  # inference size (pixels)
          conf_thres=0.001,  # confidence threshold
          iou_thres=0.6,  # NMS IoU threshold
-         task='val',  # train, val, test, speed or study
+         task='detectVal',  # train, val, test, speed or study
          device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
          single_cls=False,  # treat as single-class dataset
          augment=False,  # augmented inference
@@ -78,8 +78,8 @@ def test(data,
         with open(data) as f:
             data = yaml.safe_load(f)
     check_dataset(data)  # check
-    is_coco = type(data['val']) is str and data['val'].endswith('coco/val2017.txt')  # COCO dataset
-    nc = 1 if single_cls else int(data['nc'])  # number of classes
+    is_coco = type(data['detectVal']) is str and data['detectVal'].endswith('coco/val2017.txt')  # COCO dataset
+    nc = 1 if single_cls else int(data['detectNc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
 
@@ -91,7 +91,7 @@ def test(data,
     if not training:
         if device.type != 'cpu':
             model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
-        task = task if task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
+        task = task if task in ('train', 'val', 'test') else 'detectVal'  # path to train/val/test images
         dataloader = create_dataloader(data[task], imgsz, batch_size, gs, single_cls, pad=0.5, rect=True,
                                        prefix=colorstr(f'{task}: '))[0]
 
@@ -115,6 +115,8 @@ def test(data,
 
         # Run model
         out, train_out = model(img, augment=augment)  # inference and training outputs
+        out = out[:,:,:15]
+        train_out = [train_out_item[:,:,:,:,:15] for train_out_item in train_out]
         t1 += time_synchronized() - t
 
         # Compute loss

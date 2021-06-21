@@ -63,16 +63,16 @@ class Detect(nn.Module):
                     y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                     y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
                     #landmark
-                    y[..., 5:15] = y[..., 5:15] * 8 - 4
-                    y[..., 5:7] = y[..., 5:7] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
+                    y[..., 5+self.nc:15+self.nc] = y[..., 5+self.nc:15+self.nc] * 8 - 4
+                    y[..., 5+self.nc:7+self.nc] = y[..., 5+self.nc:7+self.nc] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
                         i]  # landmark x1 y1
-                    y[..., 7:9] = y[..., 7:9] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
+                    y[..., 7+self.nc:9+self.nc] = y[..., 7+self.nc:9+self.nc] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
                         i]  # landmark x2 y2
-                    y[..., 9:11] = y[..., 9:11] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
+                    y[..., 9+self.nc:11+self.nc] = y[..., 9+self.nc:11+self.nc] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
                         i]  # landmark x3 y3
-                    y[..., 11:13] = y[..., 11:13] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
+                    y[..., 11+self.nc:13+self.nc] = y[..., 11+self.nc:13+self.nc] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
                         i]  # landmark x4 y4
-                    y[..., 13:15] = y[..., 13:15] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
+                    y[..., 13+self.nc:15+self.nc] = y[..., 13+self.nc:15+self.nc] * self.anchor_grid[i] + self.grid[i].to(x[i].device) * self.stride[
                         i]  # landmark x5 y5
 
                 else:  # for YOLOv5 on AWS Inferentia https://github.com/ultralytics/yolov5/pull/2953

@@ -13,7 +13,7 @@ import copy
 
 from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages, letterbox
-from utils.face_general import check_img_size, non_max_suppression, apply_classifier, scale_coords, xyxy2xywh, \
+from utils.faceKp_general import check_img_size, non_max_suppression, apply_classifier, scale_coords, xyxy2xywh, \
     strip_optimizer, set_logging, increment_path
 from utils.plots import plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized
@@ -157,8 +157,8 @@ def detect_one(model, image_path, device):
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    weights = '/home/chase/shy/testyolo/yolov5/runs/train/exp18/weights/last.pt'
+    weights = '/home/chase/shy/testyolo/yolov5/runs/train/exp84/weights/last.pt'
     model = load_model(weights, device)
-    image_path = '/home/chase/shy/dataset/spjgh/facekpyolo/images/train/faceData_6_Funeral_Funeral_6_351.jpg'
+    image_path = '/home/chase/shy/dataset/spjgh/yolodata/images/train/1239.jpg'
     detect_one(model, image_path, device)
     print('over')
