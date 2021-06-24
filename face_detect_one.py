@@ -157,8 +157,8 @@ def detect_one(model, image_path, device):
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    weights = '/home/chase/shy/testyolo/yolov5/runs/train/exp51/weights/last.pt'
+    weights = '/home/chase/shy/testyolo/yolov5/runs/train/exp68/weights/last.pt'
     model = load_model(weights, device)
-    image_path = '/home/chase/shy/dataset/spjgh/facekpyolo/images/train/faceData_hy_7046.jpg'
+    image_path = '/home/chase/shy/dataset/spjgh/facekpyolo/images/train/faceData_6_Funeral_Funeral_6_351.jpg'
     detect_one(model, image_path, device)
     print('over')

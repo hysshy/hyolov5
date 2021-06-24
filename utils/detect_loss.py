@@ -85,19 +85,6 @@ class QFocalLoss(nn.Module):
             return loss
 
 
-class LandmarksLoss(nn.Module):
-    # BCEwithLogitLoss() with reduced missing label effects.
-    def __init__(self, alpha=1.0):
-        super(LandmarksLoss, self).__init__()
-        self.loss_fcn = nn.SmoothL1Loss(reduction='sum')
-        self.alpha = alpha
-
-    def forward(self, pred, truel, mask):
-        loss = self.loss_fcn(pred*mask, truel*mask)
-        #loss = torch.abs(pred*mask - truel*mask)
-        #loss = loss.sum(dim = 1)
-        return loss / (torch.sum(mask) + 10e-14)
-
 class ComputeLoss:
     # Compute losses
     def __init__(self, model, autobalance=False):
@@ -108,8 +95,7 @@ class ComputeLoss:
         # Define criteria
         BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
         BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=device))
-        # landmarks
-        self.landmarks_loss = LandmarksLoss(1.0)
+
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
         self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))  # positive, negative BCE targets
 
@@ -122,8 +108,8 @@ class ComputeLoss:
         self.balance = {3: [4.0, 1.0, 0.4]}.get(det.nl, [4.0, 1.0, 0.25, 0.06, .02])  # P3-P7
         self.ssi = list(det.stride).index(16) if autobalance else 0  # stride 16 index
         self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, model.gr, h, autobalance
-        if hasattr(det, 'anchors_faceKp'):
-            for k in 'na', 'nc', 'nl', 'anchors_faceKp':
+        if hasattr(det, 'anchors_detect'):
+            for k in 'na', 'nc', 'nl', 'anchors_detect':
                 setattr(self, k, getattr(det, k))
         elif hasattr(det, 'anchors'):
             for k in 'na', 'nc', 'nl', 'anchors':
@@ -134,43 +120,56 @@ class ComputeLoss:
 
     def __call__(self, p, targets):  # predictions, targets, model
         device = targets.device
-        # landmarks
-        lmark = torch.zeros(1, device=device)
-        tcls, tbox, indices, anchors, tlandmarks, lmks_mask = self.build_targets(p, targets)  # targets
+        lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+        tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
+
         # Losses
         for i, pi in enumerate(p):  # layer index, layer predictions
             b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
+            tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
+
             n = b.shape[0]  # number of targets
             if n:
                 ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
-                # landmarks loss
-                plandmarks = ps[:, 5:15].sigmoid() * 8. - 4.
 
-                plandmarks[:, 0:2] = plandmarks[:, 0:2] * anchors[i]
-                plandmarks[:, 2:4] = plandmarks[:, 2:4] * anchors[i]
-                plandmarks[:, 4:6] = plandmarks[:, 4:6] * anchors[i]
-                plandmarks[:, 6:8] = plandmarks[:, 6:8] * anchors[i]
-                plandmarks[:, 8:10] = plandmarks[:, 8:10] * anchors[i]
+                # Regression
+                pxy = ps[:, :2].sigmoid() * 2. - 0.5
+                pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+                pbox = torch.cat((pxy, pwh), 1)  # predicted box
+                iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
+                lbox += (1.0 - iou).mean()  # iou loss
 
-                lmark += self.landmarks_loss(plandmarks, tlandmarks[i], lmks_mask[i]) * self.balance[i]
+                # Objectness
+                tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
+                # Classification
+                if self.nc > 1:  # cls loss (only if multiple classes)
+                    t = torch.full_like(ps[:, 5:], self.cn, device=device)  # targets
+                    t[range(n), tcls[i]] = self.cp
+                    lcls += self.BCEcls(ps[:, 5:], t)  # BCE
+
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:
                 #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
+            obji = self.BCEobj(pi[..., 4], tobj)
+            lobj += obji * self.balance[i]  # obj loss
+            if self.autobalance:
+                self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
-        lmark *= self.hyp['landmark']
-        bs = p[0].shape[0]  # batch size
-        loss = lmark
-        return loss * bs, lmark.clone().detach()
+        lbox *= self.hyp['box']
+        lobj *= self.hyp['obj']
+        lcls *= self.hyp['cls']
+        bs = tobj.shape[0]  # batch size
+
+        loss = lbox + lobj + lcls
+        return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
         tcls, tbox, indices, anch = [], [], [], []
-        # landmarks
-        landmarks, lmks_mask = [], []
-        gain = torch.ones(17, device=targets.device)  # normalized to gridspace gain
+        gain = torch.ones(7, device=targets.device)  # normalized to gridspace gain
         ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
         targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # append anchor indices
 
@@ -181,17 +180,15 @@ class ComputeLoss:
                             ], device=targets.device).float() * g  # offsets
 
         for i in range(self.nl):
-            if hasattr(self, 'anchors_faceKp'):
-                anchors = self.anchors_faceKp[i]
+
+            if hasattr(self, 'anchors_detect'):
+                anchors = self.anchors_detect[i]
             elif hasattr(self, 'anchors'):
                 anchors = self.anchors[i]
             else:
                 print('cant find anchors')
                 assert False
-
             gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
-            # landmarks 10
-            gain[6:16] = torch.tensor(p[i].shape)[[3, 2, 3, 2, 3, 2, 3, 2, 3, 2]]  # xyxy gain
 
             # Match targets to anchors
             t = targets * gain
@@ -222,23 +219,10 @@ class ComputeLoss:
             gi, gj = gij.T  # grid xy indices
 
             # Append
-            a = t[:, 16].long()  # anchor indices
+            a = t[:, 6].long()  # anchor indices
             indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             anch.append(anchors[a])  # anchors
             tcls.append(c)  # class
 
-            # landmarks
-            lks = t[:, 6:16]
-            lks_mask = torch.where(lks < 0, torch.full_like(lks, 0.), torch.full_like(lks, 1.0))
-            # 应该是关键点的坐标除以anch的宽高才对，便于模型学习。使用gwh会导致不同关键点的编码不同，没有统一的参考标准
-            lks[:, [0, 1]] = (lks[:, [0, 1]] - gij)
-            lks[:, [2, 3]] = (lks[:, [2, 3]] - gij)
-            lks[:, [4, 5]] = (lks[:, [4, 5]] - gij)
-            lks[:, [6, 7]] = (lks[:, [6, 7]] - gij)
-            lks[:, [8, 9]] = (lks[:, [8, 9]] - gij)
-            lks_mask_new = lks_mask
-            lmks_mask.append(lks_mask_new)
-            landmarks.append(lks)
-
-        return tcls, tbox, indices, anch, landmarks, lmks_mask
+        return tcls, tbox, indices, anch

@@ -24,7 +24,7 @@ from tqdm import tqdm
 import detect_test
 import face_test  # for end-of-epoch mAP
 from models.experimental import attempt_load
-from models.detectwithfacekp_yolo_doubleanchor import Model
+from models.detectwithfacekp_yolo import Model
 from utils.autoanchor import check_anchors, check_anchorsList
 import utils.face_datasets as face_datasets
 import utils.datasets as detect_datasets
