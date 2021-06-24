@@ -24,16 +24,18 @@ from tqdm import tqdm
 import detect_test
 import face_test  # for end-of-epoch mAP
 from models.experimental import attempt_load
-from models.detectwithfacekp_yolo import Model
+from models.detectwithfacekpandqt_yolo import Model
 from utils.autoanchor import check_anchors, check_anchorsList
 import utils.face_datasets as face_datasets
 import utils.datasets as detect_datasets
+import utils.faceqt_datasets as faceqt_datasets
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
     check_requirements, print_mutation, set_logging, one_cycle, colorstr
 from utils.google_utils import attempt_download
 import utils.detect_loss as detect_loss
 import utils.faceKp_loss as faceKp_loss
+import utils.faceQt_loss as faceQt_loss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, de_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
@@ -101,6 +103,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     detectNc = 1 if single_cls else int(data_dict['detectNc'])  # number of classes
     detectNames = ['item'] if single_cls and len(data_dict['detectNames']) != 1 else data_dict['detectNames']  # class names
     assert len(detectNames) == detectNc, '%g names found for nc=%g dataset in %s' % (len(detectNames), detectNc, opt.data)  # check
+    # 人脸质量评估数据
+    faceQtNc = 1 if single_cls else int(data_dict['faceQtNc'])  # number of classes
+    faceQtNames = ['item'] if single_cls and len(data_dict['faceQtNames']) != 1 else data_dict['faceQtNames']  # class names
+    assert len(faceQtNames) == faceQtNc, '%g names found for nc=%g dataset in %s' % (len(faceQtNames), faceQtNc, opt.data)  # check
 
     # Model
     pretrained = weights.endswith('.pt')
@@ -123,6 +129,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     faceKp_test_path = data_dict['faceKpVal']
     detect_train_path = data_dict['detectTrain']
     detect_test_path = data_dict['detectVal']
+    faceQt_train_path = data_dict['faceQtTrain']
+    faceQt_test_path = data_dict['faceQtVal']
 
     # Freeze
     freeze = []  # parameter names to freeze (full or partial)
@@ -220,16 +228,20 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                                             hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
                                             world_size=opt.world_size, workers=opt.workers,
                                             image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
+    faceQt_dataloader, faceQt_dataset = faceqt_datasets.create_dataloader(faceQt_train_path, imgsz, batch_size, gs, single_cls,
+                                            hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
+                                            world_size=opt.world_size, workers=opt.workers,
+                                            image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
     mlc = np.concatenate(detect_dataset.labels, 0)[:, 0].max()  # max label class
     nb = len(detect_dataloader)  # number of batches
     assert mlc < detectNc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, detectNc, opt.data, detectNc - 1)
 
     # Process 0
     if rank in [-1, 0]:
-        faceKp_testloader = face_datasets.create_dataloader(faceKp_test_path, imgsz_test, batch_size * 2, gs, single_cls,
-                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
-                                       world_size=opt.world_size, workers=opt.workers,
-                                       pad=0.5, prefix=colorstr('val: '))[0]
+        # faceKp_testloader = face_datasets.create_dataloader(faceKp_test_path, imgsz_test, batch_size * 2, gs, single_cls,
+        #                                hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
+        #                                world_size=opt.world_size, workers=opt.workers,
+        #                                pad=0.5, prefix=colorstr('val: '))[0]
         detect_testloader = detect_datasets.create_dataloader(detect_test_path, imgsz_test, batch_size * 2, gs, single_cls,
                                        hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
@@ -277,6 +289,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     scaler = amp.GradScaler(enabled=cuda)
     detect_compute_loss = detect_loss.ComputeLoss(model)  # init loss class
     faceKp_compute_loss = faceKp_loss.ComputeLoss(model)
+    faceQt_compute_loss = faceQt_loss.ComputeLoss(model)
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {detect_dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
@@ -308,6 +321,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         # 人脸关键点数据保存
         faceKp_pbar = enumerate(faceKp_dataloader)
         faceKp_len = len(faceKp_dataloader)
+        faceQt_pbar = enumerate(faceQt_dataloader)
+        faceQt_len = len(faceQt_dataloader)
         detect_phbar = enumerate(detect_dataloader)
         logger.info(('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'landmark', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
         if rank in [-1, 0]:
@@ -316,11 +331,16 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         for i, (detect_imgs, detect_targets, detect_paths, _) in detect_phbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
             detect_imgs = detect_imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
-            if i >= faceKp_len:
-                faceKp_pbar = enumerate(faceKp_dataloader)
-                faceKp_len = len(faceKp_dataloader)
-            _, (faceKp_imgs, faceKp_targets, faceKp_paths, _) = faceKp_pbar.__next__()
-            faceKp_imgs = faceKp_imgs.to(device, non_blocking=True).float() / 255.0
+            # if i >= faceKp_len:
+            #     faceKp_pbar = enumerate(faceKp_dataloader)
+            #     faceKp_len = len(faceKp_dataloader)
+            # _, (faceKp_imgs, faceKp_targets, faceKp_paths, _) = faceKp_pbar.__next__()
+            # faceKp_imgs = faceKp_imgs.to(device, non_blocking=True).float() / 255.0
+            if i >= faceQt_len:
+                faceQt_pbar = enumerate(faceQt_dataloader)
+                faceQt_len = len(faceQt_dataloader)
+            _, (faceQt_imgs, faceQt_targets, faceQt_paths, _) = faceQt_pbar.__next__()
+            faceQt_imgs = faceQt_imgs.to(device, non_blocking=True).float() / 255.0
             # Warmup
             if ni <= nw:
                 xi = [0, nw]  # x interp
@@ -343,24 +363,30 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             # Forward
             with amp.autocast(enabled=cuda):
                 detect_pred = model(detect_imgs)# forward
-                faceKp_pred = model(faceKp_imgs)
-                bboxes_pred = []
-                landMarks_pred = []
+                # faceKp_pred = model(faceKp_imgs)
+                faceQt_pred = model(faceQt_imgs)
+                detect_pred_ = []
+                faceKp_pred_ = []
+                faceQt_pred_ = []
                 for predItem in detect_pred:
                     bboxes = predItem[:,:,:,:,:15]
-                    bboxes_pred.append(bboxes)
-                for predItem in faceKp_pred:
-                    landMarks = torch.cat((predItem[:,:,:,:,0:5], predItem[:,:,:,:,15:25]), dim=4)
-                    landMarks_pred.append(landMarks)
-                detectloss, detectloss_items = detect_compute_loss(bboxes_pred, detect_targets.to(device))
-                faceKploss, faceKp_items = faceKp_compute_loss(landMarks_pred, faceKp_targets.to(device))# loss scaled by batch_size
+                    detect_pred_.append(bboxes)
+                # for predItem in faceKp_pred:
+                #     landMarks = torch.cat((predItem[:,:,:,:,0:5], predItem[:,:,:,:,15:25]), dim=4)
+                #     faceKp_pred_.append(landMarks)
+                for predItem in faceQt_pred:
+                    faceQt = torch.cat((predItem[:,:,:,:,0:5], predItem[:,:,:,:,25:26]), dim=4)
+                    faceQt_pred_.append(faceQt)
+                detectloss, detectloss_items = detect_compute_loss(detect_pred_, detect_targets.to(device))
+                # faceKploss, faceKp_items = faceKp_compute_loss(faceKp_pred_, faceKp_targets.to(device))# loss scaled by batch_size
+                faceQtloss, faceQtloss_items = faceQt_compute_loss(faceQt_pred_, faceQt_targets.to(device))
                 if rank != -1:
                     detectloss *= opt.world_size  # gradient averaged between devices in DDP mode
                 if opt.quad:
                     detectloss *= 4.
 
-                loss = detectloss + faceKploss
-                loss_items = torch.cat((faceKp_items, detectloss_items))
+                loss = detectloss + faceQtloss
+                loss_items = torch.cat((faceQtloss_items, detectloss_items))
             # Backward
             scaler.scale(loss).backward()
 
@@ -503,12 +529,12 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='/home/chase/shy/testyolo/yolov5/runs/train/exp26/weights/last.pt', help='initial weights path')
+    parser.add_argument('--weights', type=str, default='', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='/home/chase/shy/testyolo/yolov5/models/yolov5x.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='/home/chase/shy/testyolo/yolov5/data/detectWithfaceKp.yaml', help='dataset.yaml path')
+    parser.add_argument('--data', type=str, default='/home/chase/shy/testyolo/yolov5/data/detectWithfaceKpQt.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default='./data/hyp.scratch.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=201)
-    parser.add_argument('--batch-size', type=int, default=4, help='total batch size for all GPUs')
+    parser.add_argument('--batch-size', type=int, default=2, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
@@ -519,7 +545,7 @@ if __name__ == '__main__':
     parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
     parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
-    parser.add_argument('--device', default='0,1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--multi-scale', action='store_true', help='vary img-size +/- 50%%')
     parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
     parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')

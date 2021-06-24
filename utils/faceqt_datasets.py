@@ -22,7 +22,7 @@ from PIL import Image, ExifTags
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from utils.face_general import check_requirements, check_file, check_dataset, xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyn2xy, \
+from utils.general import check_requirements, check_file, check_dataset, xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyn2xy, \
     segment2box, segments2boxes, resample_segments, clean_str
 from utils.torch_utils import torch_distributed_zero_first
 
@@ -548,12 +548,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])  # convert xyxy to xywh
             labels[:, [2, 4]] /= img.shape[0]  # normalized height 0-1
             labels[:, [1, 3]] /= img.shape[1]  # normalized width 0-1
-            # landmarks
-            labels[:, [5, 7, 9, 11, 13]] /= img.shape[1]  # normalized landmark x 0-1
-            labels[:, [5, 7, 9, 11, 13]] = np.where(labels[:, [5, 7, 9, 11, 13]] < 0, -1, labels[:, [5, 7, 9, 11, 13]])
-            labels[:, [6, 8, 10, 12, 14]] /= img.shape[0]  # normalized landmark y 0-1
-            labels[:, [6, 8, 10, 12, 14]] = np.where(labels[:, [6, 8, 10, 12, 14]] < 0, -1, labels[:, [6, 8, 10, 12, 14]])
-
 
         if self.augment:
             # flip up-down
@@ -561,34 +555,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 img = np.flipud(img)
                 if nL:
                     labels[:, 2] = 1 - labels[:, 2]
-                    #landmarks
-                    labels[:, 6] = np.where(labels[:,6] < 0, -1, 1 - labels[:, 6])
-                    labels[:, 8] = np.where(labels[:, 8] < 0, -1, 1 - labels[:, 8])
-                    labels[:, 10] = np.where(labels[:, 10] < 0, -1, 1 - labels[:, 10])
-                    labels[:, 12] = np.where(labels[:, 12] < 0, -1, 1 - labels[:, 12])
-                    labels[:, 14] = np.where(labels[:, 14] < 0, -1, 1 - labels[:, 14])
-
 
             # flip left-right
             if random.random() < hyp['fliplr']:
                 img = np.fliplr(img)
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
-                    # landmarks
-                    labels[:, 5] = np.where(labels[:, 5] < 0, -1, 1 - labels[:, 5])
-                    labels[:, 7] = np.where(labels[:, 7] < 0, -1, 1 - labels[:, 7])
-                    labels[:, 9] = np.where(labels[:, 9] < 0, -1, 1 - labels[:, 9])
-                    labels[:, 11] = np.where(labels[:, 11] < 0, -1, 1 - labels[:, 11])
-                    labels[:, 13] = np.where(labels[:, 13] < 0, -1, 1 - labels[:, 13])
-                    #左右镜像的时候，左眼、右眼，　左嘴角、右嘴角无法区分, 应该交换位置，便于网络学习
-                    eye_left = np.copy(labels[:, [5, 6]])
-                    mouth_left = np.copy(labels[:, [11, 12]])
-                    labels[:, [5, 6]] = labels[:, [7, 8]]
-                    labels[:, [7, 8]] = eye_left
-                    labels[:, [11, 12]] = labels[:, [13, 14]]
-                    labels[:, [13, 14]] = mouth_left
 
-        labels_out = torch.zeros((nL, 16))
+        labels_out = torch.zeros((nL, 7))
         if nL:
             labels_out[:, 1:] = torch.from_numpy(labels)
 
@@ -718,25 +692,6 @@ def load_mosaic(self, index):
     for x in (labels4[:, 1:5], *segments4):
         np.clip(x, 0, 2 * s, out=x)  # clip when using random_perspective()
     # img4, labels4 = replicate(img4, labels4)  # replicate
-    #landmarks
-    labels4[:, 5:] = np.where(labels4[:, 5:] < 0, -1, labels4[:, 5:])
-    labels4[:, 5:] = np.where(labels4[:, 5:] > 2 * s, -1, labels4[:, 5:])
-
-    labels4[:, 5] = np.where(labels4[:, 6] == -1, -1, labels4[:, 5])
-    labels4[:, 6] = np.where(labels4[:, 5] == -1, -1, labels4[:, 6])
-
-    labels4[:, 7] = np.where(labels4[:, 8] == -1, -1, labels4[:, 7])
-    labels4[:, 8] = np.where(labels4[:, 7] == -1, -1, labels4[:, 8])
-
-    labels4[:, 9] = np.where(labels4[:, 10] == -1, -1, labels4[:, 9])
-    labels4[:, 10] = np.where(labels4[:, 9] == -1, -1, labels4[:, 10])
-
-    labels4[:, 11] = np.where(labels4[:, 12] == -1, -1, labels4[:, 11])
-    labels4[:, 12] = np.where(labels4[:, 11] == -1, -1, labels4[:, 12])
-
-    labels4[:, 13] = np.where(labels4[:, 14] == -1, -1, labels4[:, 13])
-    labels4[:, 14] = np.where(labels4[:, 13] == -1, -1, labels4[:, 14])
-
     # Augment
     img4, labels4 = random_perspective(img4, labels4, segments4,
                                        degrees=self.hyp['degrees'],
@@ -940,43 +895,14 @@ def random_perspective(img, targets=(), segments=(), degrees=10, translate=.1, s
                 new[i] = segment2box(xy, width, height)
 
         else:  # warp boxes
-            xy = np.ones((n * 9, 3))
-            xy[:, :2] = targets[:, [1, 2, 3, 4, 1, 4, 3, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]].reshape(n * 9, 2)  # x1y1, x2y2, x1y2, x2y1
+            xy = np.ones((n * 4, 3))
+            xy[:, :2] = targets[:, [1, 2, 3, 4, 1, 4, 3, 2]].reshape(n * 4, 2)  # x1y1, x2y2, x1y2, x2y1
             xy = xy @ M.T  # transform
-            xy = (xy[:, :2] / xy[:, 2:3] if perspective else xy[:, :2]).reshape(n, 18)  # perspective rescale or affine
+            xy = (xy[:, :2] / xy[:, 2:3] if perspective else xy[:, :2]).reshape(n, 8)  # perspective rescale or affine
 
             # create new boxes
             x = xy[:, [0, 2, 4, 6]]
             y = xy[:, [1, 3, 5, 7]]
-
-            landmarks = xy[:, [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]]
-            mask = np.array(targets[:, 5:] > 0, dtype=np.int32)
-            landmarks = landmarks * mask
-            landmarks = landmarks + mask - 1
-
-            landmarks = np.where(landmarks < 0, -1, landmarks)
-            landmarks[:, [0, 2, 4, 6, 8]] = np.where(landmarks[:, [0, 2, 4, 6, 8]] > width, -1,
-                                                     landmarks[:, [0, 2, 4, 6, 8]])
-            landmarks[:, [1, 3, 5, 7, 9]] = np.where(landmarks[:, [1, 3, 5, 7, 9]] > height, -1,
-                                                     landmarks[:, [1, 3, 5, 7, 9]])
-
-            landmarks[:, 0] = np.where(landmarks[:, 1] == -1, -1, landmarks[:, 0])
-            landmarks[:, 1] = np.where(landmarks[:, 0] == -1, -1, landmarks[:, 1])
-
-            landmarks[:, 2] = np.where(landmarks[:, 3] == -1, -1, landmarks[:, 2])
-            landmarks[:, 3] = np.where(landmarks[:, 2] == -1, -1, landmarks[:, 3])
-
-            landmarks[:, 4] = np.where(landmarks[:, 5] == -1, -1, landmarks[:, 4])
-            landmarks[:, 5] = np.where(landmarks[:, 4] == -1, -1, landmarks[:, 5])
-
-            landmarks[:, 6] = np.where(landmarks[:, 7] == -1, -1, landmarks[:, 6])
-            landmarks[:, 7] = np.where(landmarks[:, 6] == -1, -1, landmarks[:, 7])
-
-            landmarks[:, 8] = np.where(landmarks[:, 9] == -1, -1, landmarks[:, 8])
-            landmarks[:, 9] = np.where(landmarks[:, 8] == -1, -1, landmarks[:, 9])
-
-            targets[:, 5:] = landmarks
-
             new = np.concatenate((x.min(1), y.min(1), x.max(1), y.max(1))).reshape(4, n).T
 
             # clip
@@ -1142,7 +1068,7 @@ def verify_image_label(args):
                 l = [x.split() for x in f.read().strip().splitlines() if len(x)]
                 l = np.array(l, dtype=np.float32)
             if len(l):
-                assert l.shape[1] == 15, 'labels require 15 columns each'
+                assert l.shape[1] == 6, 'labels require 6 columns each'
                 assert (l >= -1).all(), 'negative labels'
                 assert (l[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels'
                 assert np.unique(l, axis=0).shape[0] == l.shape[0], 'duplicate labels'
@@ -1152,7 +1078,7 @@ def verify_image_label(args):
                 l = np.zeros((0, 5), dtype=np.float32)
         else:
             nm = 1  # label missing
-            l = np.zeros((0, 15), dtype=np.float32)
+            l = np.zeros((0, 6), dtype=np.float32)
         return im_file, l, shape, segments, nm, nf, ne, nc
     except Exception as e:
         nc = 1

@@ -4,7 +4,7 @@ import matplotlib
 matplotlib.use('Agg')
 import time
 from pathlib import Path
-
+import os
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
@@ -51,7 +51,7 @@ def scale_coords_landmarks(img1_shape, coords, img0_shape, ratio_pad=None):
 
 
 
-def show_results(img, xywh, conf, landmarks, class_num):
+def show_results(img, image_path, i, xywh, conf, landmarks, faceqt, class_num):
     h,w,c = img.shape
     tl = 1 or round(0.002 * (h + w) / 2) + 1  # line/font thickness
     x1 = int(xywh[0] * w - 0.5 * xywh[2] * w)
@@ -61,11 +61,17 @@ def show_results(img, xywh, conf, landmarks, class_num):
     cv2.rectangle(img, (x1,y1), (x2, y2), (0,255,0), thickness=tl, lineType=cv2.LINE_AA)
 
     clors = [(255,0,0),(0,255,0),(0,0,255),(255,255,0),(0,255,255)]
-
-    for i in range(5):
-        point_x = int(landmarks[2 * i] * w)
-        point_y = int(landmarks[2 * i + 1] * h)
-        cv2.circle(img, (point_x, point_y), tl+1, clors[i], -1)
+    if int(class_num) in [8,9]:
+        for i in range(5):
+            point_x = int(landmarks[2 * i] * w)
+            point_y = int(landmarks[2 * i + 1] * h)
+            cv2.circle(img, (point_x, point_y), tl+1, clors[i], -1)
+        faceqtRectPath = '/home/chase/shy/testyolo/yolov5/runs/train/exp68/faceqtrect'
+        print(faceqt)
+        faceqt = round(float(faceqt),1)
+        if not os.path.exists(faceqtRectPath+'/'+str(faceqt)):
+            os.makedirs(faceqtRectPath+'/'+str(faceqt))
+        cv2.imwrite(faceqtRectPath+'/'+str(faceqt)+'/'+image_path.split('/')[-1].replace('.jpg','_'+str(i)+'.jpg'), img[y1:y2,x1:x2])
 
     tf = max(tl - 1, 1)  # font thickness
     label = str(int(class_num)) + ': ' + str(conf)[:5]
@@ -110,7 +116,7 @@ def detect_one(model, image_path, device):
 
     # Apply NMS
     pred = non_max_suppression(pred, conf_thres, iou_thres)
-    print('pred: ', pred)
+    # print('pred: ', pred)
     t2 = time_synchronized()
 
 
@@ -138,19 +144,20 @@ def detect_one(model, image_path, device):
                 xywh = (xyxy2xywh(det[j, :4].clone().detach().view(1, 4)) / gn).view(-1).tolist()
                 conf = det[j, 4].cpu().numpy()
                 landmarks = (det[j, 5:15].view(1, 10) / gn_lks).view(-1).tolist()
-                class_num = det[j, 15].cpu().numpy()
+                class_num = det[j, 16].cpu().numpy()
+                faceqt = det[j, 15].cpu().numpy()
+                orgimg = show_results(orgimg, image_path, i, xywh, conf, landmarks, faceqt, class_num)
 
-
-                orgimg = show_results(orgimg, xywh, conf, landmarks, class_num)
-
+    drawPath = '/home/chase/shy/testyolo/yolov5/runs/train/exp68/draw'
+    # print(f'Done. ({time.time() - t0:.3f}s)')
+    cv2.imwrite(drawPath+'/'+image_path.split('/')[-1], orgimg)
 
 
     # Stream results
-    print(f'Done. ({time.time() - t0:.3f}s)')
 
-    cv2.imshow('orgimg', orgimg)
-    if cv2.waitKey(0) == ord('q'):  # q to quit
-        raise StopIteration
+    # cv2.imshow('orgimg', orgimg)
+    # if cv2.waitKey(0) == ord('q'):  # q to quit
+    #     raise StopIteration
 
 
 
@@ -159,6 +166,9 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     weights = '/home/chase/shy/testyolo/yolov5/runs/train/exp68/weights/last.pt'
     model = load_model(weights, device)
-    image_path = '/home/chase/shy/dataset/spjgh/yolodata/images/train/1410.jpg'
-    detect_one(model, image_path, device)
-    print('over')
+    # image_path = '/home/chase/shy/dataset/spjgh/yolodata/images/train/1389.jpg'
+    # detect_one(model, image_path, device)
+    # print('over')
+    image_path = '/home/chase/shy/dataset/spjgh/yolodata/images/train'
+    for imgName in os.listdir(image_path):
+        detect_one(model, image_path+'/'+imgName, device)

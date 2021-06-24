@@ -1,0 +1,33 @@
+# COCO 2017 dataset http://cocodataset.org
+# Train command: python train.py --data coco.yaml
+# Default dataset location is next to /yolov5:
+#   /parent_folder
+#     /coco
+#     /yolov5
+
+
+# download command/URL (optional)
+#download: bash data/scripts/get_coco.sh
+
+# train and val data as 1) directory: path/image/, 2) file: path/image.txt, or 3) list: [path1/image/, path2/image/]
+faceKpTrain: /home/chase/shy/dataset/spjgh/facekpyolo/images/train/  # 118287 image
+faceKpVal: /home/chase/shy/dataset/spjgh/facekpyolo/images/val/  # 5000 image
+faceQtTrain: /home/chase/shy/dataset/spjgh/faceqtyolo/images/train/  # 118287 image
+faceQtVal: /home/chase/shy/dataset/spjgh/faceqtyolo/images/val/  # 5000 image
+detectTrain: /home/chase/shy/dataset/spjgh/yolodata/images/train/
+detectVal: /home/chase/shy/dataset/spjgh/yolodata/images/val/
+
+
+# number of classes
+faceKpNc: 1
+faceQtNc: 1
+detectNc: 10
+# class names
+faceKpNames: ["face"]
+faceQtNames: ["face"]
+detectNames: ['person', 'bicycle', 'ride', 'motorcycle', 'dog', 'cat', 'car', 'truck', 'face', 'facewithmask']
+# Print classes
+# with open('data/coco.yaml') as f:
+#   d = yaml.load(f, Loader=yaml.FullLoader)  # dict
+#   for i, x in enumerate(d['names']):
+#     print(i, x)
