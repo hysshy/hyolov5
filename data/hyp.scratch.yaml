@@ -32,3 +32,4 @@ fliplr: 0.5  # image flip left-right (probability)
 mosaic: 1.0  # image mosaic (probability)
 mixup: 0.0  # image mixup (probability)
 landmark: 0.005
+faceQt: 0.01
