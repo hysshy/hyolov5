@@ -22,7 +22,7 @@ from utils.torch_utils import time_synchronized, fuse_conv_and_bn, model_info, s
 from mmdet.models.roi_heads.roi_extractors.single_level_roi_extractor import SingleRoIExtractor
 from mmdet.models.roi_heads.bbox_heads.convfc_bbox_head import Shared2FCBBoxHead
 from utils.general import xywhn2xyxy
-
+import torch
 try:
     import thop  # for FLOPs computation
 except ImportError:
@@ -47,6 +47,7 @@ class Detect(nn.Module):
         self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
         self.m_roi = nn.Conv2d(ch[0], 256, 1)
+        self.m_reid_roi = nn.Conv2d(ch[0], 1024, 1)
         self.inplace = inplace  # use in-place ops (e.g. slice assignment)
         self.bbox_roi_extractor = SingleRoIExtractor(roi_layer={'type':'RoIAlign', 'out_size':28, 'sample_num':0},
                                                      out_channels=256,
@@ -67,6 +68,24 @@ class Detect(nn.Module):
                                            with_faceKp=True,
                                            num_shared_convs=4,
                                            )
+        self.reid_roi_extractor = SingleRoIExtractor(roi_layer={'type':'RoIAlign', 'out_size':7, 'sample_num':0},
+                                                     out_channels=256,
+                                                     featmap_strides=[8],
+                                                     finest_scale=56)
+        self.reid_head = Shared2FCBBoxHead(in_channels=256,
+                                           conv_out_channels=1024,
+                                           roi_feat_size=7,
+                                           num_classes=544,
+                                           bbox_coder=dict(
+                                               type='DeltaXYWHBBoxCoder',
+                                               target_means=[0., 0., 0., 0.],
+                                               target_stds=[0.1, 0.1, 0.2, 0.2]),
+                                           with_reid=True,
+                                           with_cls=False,
+                                           with_reg=False,
+                                           num_shared_convs=4,
+                                           num_shared_fs=0,
+                                           )
     def forward(self, x, rois=None):
         # x = x.copy()  # for profiling
         if not self.training:
@@ -74,8 +93,10 @@ class Detect(nn.Module):
         z = []  # inference output
         if rois is not None:
             roi_x = (self.m_roi(x[0]).float(),)
-            roi_feats = self.bbox_roi_extractor(roi_x, rois)
-            kp_pred = self.bbox_head.forward_kp(roi_feats)
+            roi_feats = self.reid_roi_extractor(roi_x, rois)
+            # kp_pred = self.bbox_head.forward_kp(roi_feats)
+            kp_pred = self.reid_head.forward_reid(roi_feats)
+
         else:
             for i in range(self.nl):
                 x[i] = self.m[i](x[i])  # conv
@@ -190,13 +211,13 @@ class Model(nn.Module):
                 if m == self.model[0]:
                     logger.info(f"{'time (ms)':>10s} {'GFLOPs':>10s} {'params':>10s}  {'module'}")
                 logger.info(f'{dt[-1]:10.2f} {o:10.2f} {m.np:10.0f}  {m.type}')
-
-            if m.type =='models.detectwithfacekp_qt_yolo_roi.Detect' and targets is not None:
+            if m.type =='models.detectwithfacekp_qt_reid_yolo_roi.Detect' and targets is not None:
                 roi = xywhn2xyxy(targets[:, 2:6], 640, 640, padw=0, padh=0)
                 rois = torch.cat([targets[:, :1], roi], dim=1)
                 x = m(x, rois)  # run
             else:
-                x = m(x)
+                with torch.no_grad():
+                    x = m(x)
             y.append(x if m.i in self.save else None)  # save output
 
         if profile:

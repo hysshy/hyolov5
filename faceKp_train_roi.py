@@ -71,7 +71,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     # Configure
     plots = not opt.evolve  # create plots
     cuda = device.type != 'cpu'
-    init_seeds(2 + rank)
+    # init_seeds(2 + rank)
     with open(opt.data) as f:
         data_dict = yaml.safe_load(f)  # data dict
 
@@ -321,7 +321,6 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 faceKp_pbar = enumerate(faceKp_dataloader)
                 faceKp_len = len(faceKp_dataloader)
             _, (faceKp_imgs, faceKp_targets, faceKp_paths, _) = faceKp_pbar.__next__()
-            print(faceKp_paths)
             faceKp_imgs = faceKp_imgs.to(device, non_blocking=True).float() / 255.0
             # Warmup
             if ni <= nw:
@@ -369,7 +368,6 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
             # Forward
             with amp.autocast(enabled=cuda):
-                print(faceKp_targets)
                 faceKp_pred = model(faceKp_imgs, targets=faceKp_targets.to(device))
                 faceKploss, faceKp_items = faceKp_compute_loss(faceKp_pred, faceKp_targets.to(device))# loss scaled by batch_size
                 if rank != -1:

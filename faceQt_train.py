@@ -94,15 +94,13 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         data_dict = wandb_logger.data_dict
         if wandb_logger.wandb:
             weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp  # may update weights, epochs if resuming
-    # 人脸关键点数据
-    faceKpNc = 1 if single_cls else int(data_dict['faceKpNc'])  # number of classes
-    faceKpNames = ['item'] if single_cls and len(data_dict['faceKpNames']) != 1 else data_dict['faceKpNames']  # class names
-    assert len(faceKpNames) == faceKpNc, '%g names found for nc=%g dataset in %s' % (len(faceKpNames), faceKpNc, opt.data)  # check
-    is_coco = opt.data.endswith('coco.yaml') and faceKpNc == 80  # COCO dataset
+
     # 目标检测数据
     detectNc = 1 if single_cls else int(data_dict['detectNc'])  # number of classes
     detectNames = ['item'] if single_cls and len(data_dict['detectNames']) != 1 else data_dict['detectNames']  # class names
     assert len(detectNames) == detectNc, '%g names found for nc=%g dataset in %s' % (len(detectNames), detectNc, opt.data)  # check
+    is_coco = opt.data.endswith('coco.yaml') and detectNc == 80  # COCO dataset
+
     # 人脸质量评估数据
     faceQtNc = 1 if single_cls else int(data_dict['faceQtNc'])  # number of classes
     faceQtNames = ['item'] if single_cls and len(data_dict['faceQtNames']) != 1 else data_dict['faceQtNames']  # class names
@@ -118,15 +116,15 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
-        model.load_state_dict(state_dict, strict=False)  # load
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)  # load
+        print(missing_keys)
+        print(unexpected_keys)
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
     else:
         model = Model(opt.cfg, ch=3, nc=detectNc, anchors=hyp.get('anchors')).to(device)  # create
     with torch_distributed_zero_first(rank):
         check_dataset(data_dict)  # check
 
-    faceKp_train_path = data_dict['faceKpTrain']
-    faceKp_test_path = data_dict['faceKpVal']
     detect_train_path = data_dict['detectTrain']
     detect_test_path = data_dict['detectVal']
     faceQt_train_path = data_dict['faceQtTrain']
@@ -220,10 +218,6 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         logger.info('Using SyncBatchNorm()')
 
     # Trainloader
-    faceKp_dataloader, faceKp_dataset = face_datasets.create_dataloader(faceKp_train_path, imgsz, batch_size, gs, single_cls,
-                                            hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
-                                            world_size=opt.world_size, workers=opt.workers,
-                                            image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
     detect_dataloader, detect_dataset = detect_datasets.create_dataloader(detect_train_path, imgsz, batch_size, gs, single_cls,
                                             hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
                                             world_size=opt.world_size, workers=opt.workers,
@@ -318,28 +312,20 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
         # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
 
-        mloss = torch.zeros(6, device=device)  # mean losses
+        mloss = torch.zeros(5, device=device)  # mean losses
         if rank != -1:
             detect_dataloader.sampler.set_epoch(epoch)
         # 人脸关键点数据保存
-        faceKp_pbar = enumerate(faceKp_dataloader)
-        faceKp_len = len(faceKp_dataloader)
         faceQt_pbar = enumerate(faceQt_dataloader)
         faceQt_len = len(faceQt_dataloader)
         detect_phbar = enumerate(detect_dataloader)
-        logger.info(('\n' + '%10s' * 10) % ('Epoch', 'gpu_mem', 'faceqt', 'landmark', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
+        logger.info(('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'faceqt', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
         if rank in [-1, 0]:
             detect_phbar = tqdm(detect_phbar, total=nb)  # progress bar
         optimizer.zero_grad()
         for i, (detect_imgs, detect_targets, detect_paths, _) in detect_phbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
             detect_imgs = detect_imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
-
-            if i >= faceKp_len:
-                faceKp_pbar = enumerate(faceKp_dataloader)
-                faceKp_len = len(faceKp_dataloader)
-            _, (faceKp_imgs, faceKp_targets, faceKp_paths, _) = faceKp_pbar.__next__()
-            faceKp_imgs = faceKp_imgs.to(device, non_blocking=True).float() / 255.0
 
             if i >= faceQt_len:
                 faceQt_pbar = enumerate(faceQt_dataloader)
@@ -403,6 +389,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                     if opt.quad:
                         faceQtloss *= 4.
                     loss = faceQtloss
+                loss_items = torch.cat((faceQtloss_items, detectloss_items))
                 if loss == 0:
                     faceQtloss, faceQtloss_items = faceQt_compute_loss(faceQt_pred_, faceQt_targets.to(device))
                 else:
@@ -416,34 +403,11 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                         if ema:
                             ema.update(model)
 
-            if faceKp_targets.size(0) > 0:
-                # Forward
-                with amp.autocast(enabled=cuda):
-                    faceKp_pred = model(faceKp_imgs, targets=faceKp_targets.to(device))
-                    faceKploss, faceKp_items = faceKp_compute_loss(faceKp_pred, faceKp_targets.to(device))# loss scaled by batch_size
-                    if rank != -1:
-                        faceKploss *= opt.world_size  # gradient averaged between devices in DDP mode
-                    if opt.quad:
-                        faceKploss *= 4.
-                    loss = faceKploss
-                    # faceKp_items = torch.tensor([0], device=detectloss_items.device)
-                loss_items = torch.cat((faceKp_items, detectloss_items))
-                loss_items = torch.cat((faceQtloss_items, loss_items))
-                # Backward
-                scaler.scale(loss).backward()
-                # Optimize
-                if ni % accumulate == 0:
-                    scaler.step(optimizer)  # optimizer.step
-                    scaler.update()
-                    optimizer.zero_grad()
-                    if ema:
-                        ema.update(model)
-
             # Print
             if rank in [-1, 0]:
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                s = ('%10s' * 2 + '%10.4g' * 8) % (
+                s = ('%10s' * 2 + '%10.4g' * 7) % (
                     f'{epoch}/{epochs - 1}', mem, *mloss, detect_targets.shape[0], detect_imgs.shape[-1])
                 detect_phbar.set_description(s)
 

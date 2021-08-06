@@ -573,7 +573,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='/home/chase/shy/hyolov5/runs/train/exp15/weights/40last.pt', help='initial weights path')
+    parser.add_argument('--weights', type=str, default='', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='/home/chase/shy/hyolov5/models/yolov5x.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default='/home/chase/shy/hyolov5/data/detectWithfaceKpQt.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default='./data/hyp.scratch.yaml', help='hyperparameters path')

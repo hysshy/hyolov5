@@ -114,7 +114,7 @@ def test(data,
         t0 += t - t_
 
         # Run model
-        out, train_out = model(img, augment=augment)  # inference and training outputs
+        out, train_out, _ = model(img, augment=augment)  # inference and training outputs
         out = out[:,:,:15]
         train_out = [train_out_item[:,:,:,:,:15] for train_out_item in train_out]
         t1 += time_synchronized() - t

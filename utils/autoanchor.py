@@ -52,7 +52,7 @@ def check_anchors(dataset, model, thr=4.0, imgsz=640, autoAnchor=True):
         print('. Attempting to improve anchors, please wait...')
         na = m.anchor_grid.numel() // 2  # number of anchors
         try:
-            anchors = kmean_anchors(dataset, n=na, img_size=imgsz, thr=thr, gen=1000, verbose=False)
+            anchors = kmean_anchors(dataset, n=na, img_size=imgsz, thr=thr, gen=int(len(dataset)/2), verbose=False)
             print(anchors)
         except Exception as e:
             print(f'{prefix}ERROR: {e}')
