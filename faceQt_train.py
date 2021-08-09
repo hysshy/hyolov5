@@ -4,10 +4,8 @@ import math
 import os
 import random
 import time
-import warnings
 from copy import deepcopy
 from pathlib import Path
-from threading import Thread
 
 import numpy as np
 import torch.distributed as dist
@@ -22,11 +20,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import detect_test
-import face_test  # for end-of-epoch mAP
 from models.experimental import attempt_load
-from models.detectwithfacekp_qt_yolo_roi import Model
+from models.detectwithfaceqt_yolo import Model
 from utils.autoanchor import check_anchors, check_anchorsList
-import utils.face_datasets as face_datasets
 import utils.datasets as detect_datasets
 import utils.faceqt_datasets as faceqt_datasets
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
@@ -34,7 +30,6 @@ from utils.general import labels_to_class_weights, increment_path, labels_to_ima
     check_requirements, print_mutation, set_logging, one_cycle, colorstr
 from utils.google_utils import attempt_download
 import utils.detect_loss as detect_loss
-import utils.faceKp_loss_roi as faceKp_loss
 import utils.faceQt_loss as faceQt_loss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, de_parallel
@@ -116,9 +111,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
-        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)  # load
-        print(missing_keys)
-        print(unexpected_keys)
+        model.load_state_dict(state_dict, strict=False)  # load
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
     else:
         model = Model(opt.cfg, ch=3, nc=detectNc, anchors=hyp.get('anchors')).to(device)  # create
@@ -128,7 +121,6 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     detect_train_path = data_dict['detectTrain']
     detect_test_path = data_dict['detectVal']
     faceQt_train_path = data_dict['faceQtTrain']
-    faceQt_test_path = data_dict['faceQtVal']
 
     # Freeze
     freeze = []  # parameter names to freeze (full or partial)
@@ -284,7 +276,6 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
     detect_compute_loss = detect_loss.ComputeLoss(model)  # init loss class
-    faceKp_compute_loss = faceKp_loss.ComputeLoss(model)
     faceQt_compute_loss = faceQt_loss.ComputeLoss(model)
 
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
@@ -431,7 +422,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         scheduler.step()
 
         # DDP process 0 or single-GPU
-        if rank in [-1, 0] and epoch % 1 == 0:
+        if rank in [-1, 0] and epoch % 10 == 0:
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = epoch + 1 == epochs
@@ -537,11 +528,11 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='/home/chase/shy/hyolov5/runs/train/exp15/weights/40last.pt', help='initial weights path')
+    parser.add_argument('--weights', type=str, default='', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='/home/chase/shy/hyolov5/models/yolov5x.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default='/home/chase/shy/hyolov5/data/detectWithfaceKpQt.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default='./data/hyp.scratch.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=201)
+    parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--batch-size', type=int, default=2, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
     parser.add_argument('--rect', action='store_true', help='rectangular training')

@@ -10,10 +10,10 @@
 #download: bash data/scripts/get_coco.sh
 
 # train and val data as 1) directory: path/image/, 2) file: path/image.txt, or 3) list: [path1/image/, path2/image/]
-faceKpTrain: /home/chase/shy/dataset/spjgh/facekpyolo/images/train/  # 118287 image
-faceKpVal: /home/chase/shy/dataset/spjgh/facekpyolo/images/val/  # 5000 image
-detectTrain: /home/chase/shy/dataset/spjgh/yolodata/images/train/
-detectVal: /home/chase/shy/dataset/spjgh/yolodata/images/val/
+faceKpTrain: /home/chase/shy/yolodata/facekp/images/train/  # 118287 image
+faceKpVal: /home/chase/shy/yolodata/facekp/images/val/  # 5000 image
+detectTrain: /home/chase/shy/yolodata/detect/images/train/
+detectVal: /home/chase/shy/yolodata/detect/images/val/
 
 
 # number of classes
